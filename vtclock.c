@@ -1,24 +1,36 @@
 /*
- * vtclock.c -- Program to display a large digital clock.
+ * vtclock.c
+ *
+ * Program to display a large digital clock.
+ *
+ * Font "stolen" from figlet
  *
  * Original code by Rob Hoeft.
  * Enhancements by Darren Embry.
- * Fonts by Darren Embry.
+ * 
+ * Fixes for ncurses5
+ * Add color support
+ * by Nick B. 
  *
+ * Color support added. Emulate 
+ * that old green or amber monster!
+ * At present you need to define them
+ * manually at start_color()
+ *
+ * TODO: handle resize
  */
 
-#include <string.h>
 #include <ncurses.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <time.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <getopt.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "font0.h"
 #include "font1.h"
@@ -26,8 +38,6 @@
 #include "font3.h"
 #include "digitalfont0.h"
 #include "msg.h"
-#include "vtclock.h"
-#include "figlet.h"
 
 void pollkey(void);
 
@@ -38,6 +48,7 @@ void pollkey(void);
     if (config->type) { \
       sw = subwin(cl, config->type->digit_height, config->type->digit_width, \
                   starty + (VTCLOCK_ALIGN * (cl_height - config->type->digit_height) / 2), startx); \
+	    wcolor_set(sw, 1, NULL); \
       startx += config->type->digit_width; \
     } else { \
       sw = NULL; \
@@ -48,6 +59,7 @@ void pollkey(void);
     if (config->type) { \
       sw = subwin(cl, config->type->digit_height, config->type->colon_width, \
                   starty + (VTCLOCK_ALIGN * (cl_height - config->type->digit_height) / 2), startx); \
+	    wcolor_set(sw, 1, NULL); \
       startx += config->type->colon_width; \
     } else { \
       sw = NULL; \
@@ -57,12 +69,14 @@ void pollkey(void);
   do { \
     if (sw) { \
       vtclock_print_string(sw, 0, 0, config->type->digits[digit]); \
+	    wcolor_set(sw, 1, NULL); \
     } \
   } while(0)
 #define DRAW_COLON(sw, type) \
   do { \
     if (sw) { \
       vtclock_print_string(sw, 0, 0, config->type->colon); \
+	    wcolor_set(sw, 1, NULL); \
     } \
   } while(0)
 #define DRAW_BLANK_COLON(sw, type) \
@@ -71,6 +85,14 @@ void pollkey(void);
       vtclock_print_blank_version_of_string(sw, 0, 0, config->type->colon); \
     } \
   } while(0)
+
+typedef struct {
+  vtclock_font *hour;
+  vtclock_font *minute;
+  vtclock_font *second;
+  vtclock_font *colon1;
+  vtclock_font *colon2;
+} vtclock_config;
 
 vtclock_config vtclock_config_1 = {
   &vtclock_font_0, &vtclock_font_0, &vtclock_font_0,
@@ -102,16 +124,6 @@ vtclock_config vtclock_config_4 = {
 
 static int vtclock_inverse = 0;
 static char vtclock_char = 0;	/* always use this character, if set */
-
-void
-version()
-{
-	fprintf(stdout,
-		"vtclock %d.%d.%d\n",
-		VTCLOCK_VERSION_MAJOR,
-		VTCLOCK_VERSION_MINOR,
-		VTCLOCK_VERSION_PATCHLEVEL);
-}
 
 void
 small_sleep()
@@ -157,8 +169,8 @@ void
 vtclock_print_string(WINDOW *win, int y, int x,
                      char *str)
 {
-  wclear(win); /* Fixes -v and -c mode screen over-writing */
-  if (vtclock_inverse) 
+	wclear(win); //Added this as -v and -c modes never cleared!
+	if (vtclock_inverse) 
     {
       char *p;
       mvwin(win, y, x);
@@ -188,7 +200,7 @@ void
 vtclock_print_blank_version_of_string(WINDOW *win, int y, int x, char *str)
 {
   char *p;
-  wclear(win); /* Fixes screen over-writing in -v and -c modes */
+  wclear(win); //added as window never cleared in -v -c 
   mvwin(win, y, x);
   for (p = str; *p; ++p) {
     if (iscntrl(*p)) {
@@ -201,23 +213,24 @@ vtclock_print_blank_version_of_string(WINDOW *win, int y, int x, char *str)
 
 void
 usage() {
-  fprintf(stdout,
-	  "usage: vtclock [option ...]\n"
-	  "  -h         help\n"
-	  "  -b/-B      turn bouncing on/off                             (default on)\n"
-	  "  -d <secs>  delay between each bounce step                   (default 30 secs)\n"
-	  "  -1/-2/-3/-4/-5  select a font                               (default font #1)\n"
-	  "  -c <char>  use specified character for font drawing\n"
-	  "  -v         use bright solid inverse-video blocks\n"
-	  "  -C/-V      use normal font drawing characters               (default)\n"
-	  "  -k/-K      blinking colons on/off                           (default off)\n"
-	  "  -f <file>  shows one line at a time from filename\n"
-	  "  -p <cmd>   shows one line at a time from output of command  (via /bin/sh -c)\n"
-	  "  -D <secs>  delay between each message line                  (default 5 secs)\n"
-	  "  -F <font>  use a figlet font\n"
-	  "  -F -       use default figlet font\n"
+  fprintf(stderr,
+          "usage: vtclock [option ...]\n"
+          "       vtclock [option ...] -f filename\n"
+          "       vtclock [option ...] -p \"command argument ...\"\n"
+          "  -h         help\n"
+          "  -b         turn bouncing on (default)\n"
+          "  -B         turn bouncing off\n"
+          "  -d <secs>  # seconds between each bouncing step (default 30)\n"
+          "  -1, -2, -3, -4, -5  select a font\n"
+	  "  -v         use inverse video for character drawing\n"
+	  "  -V         turn off inverse video\n"
+	  "  -k/-K      blinking colons on/off (default is off)\n"
+	  "  -c <char>  use specified character\n"
+	  "  -C         let font specify the characters (default)\n"
+	  "  -f         shows one line at a time from filename\n"
+	  "  -p         shows one line at a time from output of command\n"
+	  "  -D <secs>  # seconds between each message line (default 5)\n"
           );
-  version();
 }
 
 int
@@ -228,7 +241,6 @@ main(int argc, char **argv) {
   WINDOW *cld;                  /* used to erase the clock */
 
   vtclock_config *config = &vtclock_config_2;
-  vtclock_config *temp_config;
 
   int cl_height, cl_width;
   int y, x;                     /* clock window position */
@@ -244,17 +256,11 @@ main(int argc, char **argv) {
   int vtclock_bounce_delay = 30;
   int vtclock_msg_delay = 5;
   int blinking_colons = 0;
-  int msg_from_pipe = 0;
+  int is_pipe = 0;
 
   int show_message_line = 0;
-  char *msg_filename = NULL;
-
   char *msg = NULL;
   WINDOW *msgw = NULL;
-
-  struct figlet_options the_figlet_options = {
-    font_name: NULL
-  };
 
   {
     int ch;
@@ -264,25 +270,15 @@ main(int argc, char **argv) {
     extern int opterr;
     opterr = 1;
     optind = 1;
-    while ((ch = getopt(argc, argv, "hbBd:D:12345vVkKc:Cf:p:F:")) != -1) {
+    while ((ch = getopt(argc, argv, "hbBd:D:12345vVkKc:Cfp")) != -1) {
       switch (ch) {
       case 'h':
         usage();
         exit(0);
       case 'c':
-	vtclock_inverse = 0;
 	vtclock_char = optarg[0];
 	break;
       case 'C':
-	vtclock_inverse = 0;
-	vtclock_char = 0;
-	break;
-      case 'v':
-	vtclock_inverse = 1;
-	vtclock_char = 0;
-	break;
-      case 'V':
-	vtclock_inverse = 0;
 	vtclock_char = 0;
 	break;
       case 'b':
@@ -312,20 +308,11 @@ main(int argc, char **argv) {
       case '5':
         config = &vtclock_config_4;
         break;
-      case 'F':
-	if (optarg) {
-	  if (!strcmp(optarg, "-")) {
-	    if (the_figlet_options.font_name) {
-	      free(the_figlet_options.font_name);
-	      the_figlet_options.font_name = NULL;
-	    }
-	  } else {
-	    the_figlet_options.font_name = strdup(optarg);
-	  }
-	}
-	temp_config = generate_figlet_config(&the_figlet_options);
-	if (temp_config)
-	  config = temp_config;
+      case 'v':
+	vtclock_inverse = 1;
+	break;
+      case 'V':
+	vtclock_inverse = 0;
 	break;
       case 'k':
 	blinking_colons = 1;
@@ -334,18 +321,10 @@ main(int argc, char **argv) {
 	blinking_colons = 0;
 	break;
       case 'f':
-	show_message_line = 1;
-	msg_from_pipe = 0;
-	if (msg_filename != NULL)
-	  free(msg_filename);
-	msg_filename = strdup(optarg);
+	is_pipe = 0;
 	break;
       case 'p':
-	show_message_line = 1;
-	msg_from_pipe = 1;
-	if (msg_filename != NULL)
-	  free(msg_filename);
-	msg_filename = strdup(optarg);
+	is_pipe = 1;
 	break;
       case '?':
       default:
@@ -359,6 +338,15 @@ main(int argc, char **argv) {
   argv += optind;
 
   initscr();
+  /*****************
+   * Define your colors here!
+   * pair 1 is the clock color
+   * pair 2 is the message color.
+   *
+  *****************/
+  start_color();
+  init_pair(1, COLOR_WHITE, COLOR_BLACK);
+  init_pair(2, COLOR_WHITE, COLOR_BLACK);
   cbreak();
   noecho();
   nonl();
@@ -386,11 +374,10 @@ main(int argc, char **argv) {
     exit(3);
   }
 
-  if (show_message_line) {
-    if (LINES >= (cl_height + 4)) {
-      init_message(cl_width, msg_filename, msg_from_pipe, vtclock_msg_delay);
-      cl_height += 2;
-    }
+  if (LINES >= (cl_height + 4)) {
+    show_message_line = 1;
+    init_message(cl_width, argc, argv, is_pipe, vtclock_msg_delay);
+    cl_height += 2;
   }
   
   y = (LINES - cl_height) / 2;
@@ -405,6 +392,8 @@ main(int argc, char **argv) {
   cl  = newwin(cl_height, cl_width, y, x);
   cld = newwin(cl_height, cl_width, y, x);
 
+  wcolor_set (cl, 2, NULL);
+ 		
   MAKE_DIGIT_WINDOW(h1, hour);
   MAKE_DIGIT_WINDOW(h2, hour);
   MAKE_COLON_WINDOW(c1, colon1);
@@ -432,7 +421,6 @@ main(int argc, char **argv) {
     DRAW_DIGIT(s2, second, tm_time->tm_sec % 10);
     DRAW_COLON(c1, colon1);
     DRAW_COLON(c2, colon2);
-    
     if (show_message_line) {
       char *msg = get_next_message();
       if (msg != NULL) {
@@ -476,7 +464,7 @@ main(int argc, char **argv) {
 
     if (blinking_colons) {
       mydelay_half();
-      mvwin(cl, y, x); /* Position the blank colon */
+      mvwin(cl, y, x); //Added this to locate window (cl)
       DRAW_BLANK_COLON(c1, colon1);
       DRAW_BLANK_COLON(c2, colon2);
       wnoutrefresh(cl);
@@ -486,7 +474,7 @@ main(int argc, char **argv) {
     mydelay();
     ++waitfor;
   }
-
+  attroff(COLOR_PAIR(1));
   endwin();
   return 0;
 }

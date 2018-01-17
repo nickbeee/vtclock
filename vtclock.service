@@ -1,0 +1,24 @@
+# file: /etc/systemd/system/vtclock.service
+# Runs a VTCLOCK display on tty12
+# OS = Ubuntu 16.04.3 LTS
+#
+[Unit]
+Description=vtclock display on tty12
+After=network.target ntp.service
+
+[Service]
+ExecStart=/usr/local/bin/vtclock -1  -c| -f /tmp/ntpstatus
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=simple
+User=vtclock
+StandardInput=tty
+StandardOutput=tty
+StandardError=null
+TTYPath=/dev/tty12
+
+[Install]
+WantedBy=multi-user.target
+Alias=vtclock.service
